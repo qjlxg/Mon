@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           # fetch-depth: 0 确保获取完整历史，以便 rebase 成功
-          fetch-depth: 0 
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v4
