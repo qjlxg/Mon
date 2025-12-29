@@ -7,10 +7,10 @@ on:
       - 'telegram_scraper.py'
       - '.github/workflows/telegram_scraper.yml'
   schedule:
-    - cron: '30 0,4,8,12,16 * * *' # 每4小时运行一次（北京时间顺延8小时）
+    - cron: '0 0,4,8,12,16 * * *' # 对应北京时间 8:00, 12:00, 16:00, 20:00, 0:00
 
 jobs:
-  scrape_task:
+  run_job:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -23,35 +23,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
-      - name: 安装系统依赖
+      - name: 安装系统与 Python 依赖
+        # 直接在此处列出所有库，不依赖外部 txt 文件
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
-
-      - name: 缓存 OCR 模型
-        uses: actions/cache@v3
-        with:
-          path: ~/.EasyOCR
-          key: ${{ runner.os }}-easyocr-models
-
-      - name: 安装依赖包
-        run: |
+          sudo apt-get install -y libgl1 libglib2.0-0
           pip install requests beautifulsoup4 easyocr torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: 执行抓取脚本
+      - name: 运行脚本
         run: python telegram_scraper.py
 
-      - name: 提交并推送到仓库
+      - name: 提交更新
         run: |
           git config --local user.email "bot@github.com"
-          git config --local user.name "ScraperBot"
+          git config --local user.name "AutoBot"
           git add README.md history/
-          # 检查是否有内容变更，避免空提交
+          # 仅在有变动时提交
           if [ -n "$(git status --porcelain)" ]; then
-            git commit -m "Auto-sync: $(date -d '8 hours' +'%Y-%m-%d %H:%M')"
+            git commit -m "Auto sync $(date -d '8 hours' +'%Y-%m-%d %H:%M')"
             git push
-          else
-            echo "No changes to commit"
           fi
