@@ -3,87 +3,97 @@ import requests
 from bs4 import BeautifulSoup
 import easyocr
 import datetime
+import time
 
-# 初始化 OCR，增加识别容错
+# 初始化 OCR (仅使用 CPU)
 try:
+    # 第一次运行会自动下载模型，yml 中已配置缓存
     reader = easyocr.Reader(['ch_sim', 'en'], gpu=False)
 except Exception as e:
-    print(f"OCR 初始化警告: {e}")
+    print(f"OCR 初始化失败: {e}")
     reader = None
 
 channels = ['ChinaStock3000', 'Guanshuitan', 'gainiantuhua', 'hgclhyyb']
 
 def get_channel_content(channel_name):
-    print(f">>> 正在尝试抓取: {channel_name}")
+    print(f"--- 正在抓取频道: {channel_name} ---")
     url = f"https://t.me/s/{channel_name}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=20)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        # 兼容性查找：Telegram 有时使用不同的 message wrapper
-        messages = soup.find_all('div', class_=['tgme_widget_message_wrap', 'tgme_widget_message'])
+        res = requests.get(url, headers=headers, timeout=30)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, 'html.parser')
+        # 兼容多种消息容器类名
+        messages = soup.select('.tgme_widget_message_wrap, .tgme_widget_message')
         
         if not messages:
-            return f"## 来源: {channel_name}\n> 暂未抓取到公开消息，可能是频道设置了隐私或结构变更。\n\n---\n\n"
-            
+            return f"## 来源: {channel_name}\n> 未抓取到内容，可能存在访问限制。\n\n---\n\n"
     except Exception as e:
-        return f"## 来源: {channel_name}\n抓取异常: {e}\n\n---\n\n"
+        return f"## 来源: {channel_name}\n> 访问异常: {e}\n\n---\n\n"
     
-    content_md = f"## 来源: {channel_name}\n\n"
-    
-    # 获取最新的 10 条，确保覆盖
+    output = f"## 来源: {channel_name}\n\n"
+    # 获取最后 10 条消息
     for msg in messages[-10:]:
-        # 1. 文字提取 (增加对 inner 标签的深度搜索)
-        text_element = msg.find('div', class_='tgme_widget_message_text')
-        text = text_element.get_text(separator="\n").strip() if text_element else ""
+        # 1. 提取文字（包含普通消息和带格式的消息）
+        text_div = msg.find('div', class_=['tgme_widget_message_text', 'tgme_widget_message_bubble'])
+        text = text_div.get_text(separator="\n").strip() if text_div else ""
         
-        # 2. 图片提取与 OCR
-        ocr_text = ""
-        # 尝试多种可能的图片标签
-        photo_element = msg.find('a', class_=['tgme_widget_message_photo_step', 'tgme_widget_message_photo'])
-        if photo_element and reader:
-            style = photo_element.get('style', '')
-            img_url = None
-            if 'url(' in style:
+        # 2. 提取图片并进行 OCR
+        ocr_result = ""
+        # 针对图片链接的多种可能类名
+        img_tag = msg.find('a', class_=['tgme_widget_message_photo_step', 'tgme_widget_message_photo'])
+        if img_tag and reader:
+            style = img_tag.get('style', '')
+            if "url('" in style:
                 img_url = style.split("url('")[1].split("')")[0]
-            
-            if img_url:
                 try:
-                    img_data = requests.get(img_url, timeout=10).content
-                    with open("temp.jpg", "wb") as f:
-                        f.write(img_data)
+                    # 避免请求过快
+                    img_res = requests.get(img_url, timeout=15)
+                    img_path = "temp_img.jpg"
+                    with open(img_path, "wb") as f:
+                        f.write(img_res.content)
                     
-                    result = reader.readtext("temp.jpg", detail=0)
-                    if result:
-                        ocr_text = "\n\n> **[图片识别文字]**：\n> " + "\n> ".join(result)
+                    # 识别文字，detail=0 只返回文本列表
+                    lines = reader.readtext(img_path, detail=0)
+                    if lines:
+                        ocr_result = "\n\n> **[图片识别文字]**：\n> " + "\n> ".join(lines)
+                    os.remove(img_path)
                 except Exception as e:
-                    print(f"图片处理跳过: {e}")
+                    print(f"图片 OCR 失败: {e}")
 
-        if text or ocr_text:
-            content_md += f"{text}{ocr_text}\n\n---\n\n"
+        if text or ocr_result:
+            output += f"{text}{ocr_result}\n\n---\n\n"
             
-    return content_md
+    return output
 
 def main():
-    shanghai_time = (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S')
-    final_report = f"# Telegram 频道自动汇总\n\n更新时间 (北京时间): {shanghai_time}\n\n"
+    # 上海时区处理
+    sh_tz = datetime.timezone(datetime.timedelta(hours=8))
+    now = datetime.datetime.now(sh_tz)
+    sh_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    
+    header = f"# Telegram 内容自动汇总\n\n**更新时间 (北京时间): {sh_time_str}**\n\n"
+    full_body = ""
     
     for channel in channels:
-        final_report += get_channel_content(channel)
-
+        full_body += get_channel_content(channel)
+        time.sleep(2) # 频道间微量延迟，防屏蔽
+        
     # 写入 README.md
     with open("README.md", "w", encoding="utf-8") as f:
-        f.write(final_report)
+        f.write(header + full_body)
     
-    # 同时在 history 目录存档（按日期）
-    if not os.path.exists("history"):
-        os.makedirs("history")
-    history_path = f"history/{shanghai_time[:10]}.md"
-    with open(history_path, "a", encoding="utf-8") as f:
-        f.write(f"\n\n--- 抓取时间: {shanghai_time} ---\n\n" + final_report)
+    # 写入历史目录
+    history_dir = "history"
+    if not os.path.exists(history_dir):
+        os.makedirs(history_dir)
+    
+    history_file = f"{history_dir}/{now.strftime('%Y-%m-%d')}.md"
+    with open(history_file, "a", encoding="utf-8") as f:
+        f.write(f"\n\n### 抓取时点: {sh_time_str}\n\n" + full_body)
 
 if __name__ == "__main__":
     main()
