@@ -5,31 +5,48 @@ on:
       - 'confluence_hunter.py'
       - '.github/workflows/confluence.yml'
   schedule:
-    - cron: '30 08 * * *' # 北京时间 16:30 (在所有单项脚本之后)
+    - cron: '30 08 * * *' # 北京时间 16:30
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  run_confluence:
+  run_analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - run: pip install pandas
-      - name: Run Confluence Analysis
+
+      - name: Run Analysis
         run: python confluence_hunter.py
+
       - name: Commit and Push
         run: |
           git config --local user.email "bot@github.com"
           git config --local user.name "ConfluenceBot"
+          
+          # 1. 先将修改加入暂存区
           git add results/
+          
+          # 2. 只有在有变动时才继续
           if [ -n "$(git status --porcelain)" ]; then
-            git pull --rebase origin main
+            # 3. 先提交到本地（解决 exit 128 错误的关键）
             git commit -m "Auto: Confluence Report $(date +'%Y-%m-%d')"
+            
+            # 4. 提交后再拉取远程变动进行变基
+            git pull --rebase origin main
+            
+            # 5. 最后推送到远程
             git push origin main
+          else
+            echo "No changes to report."
           fi
