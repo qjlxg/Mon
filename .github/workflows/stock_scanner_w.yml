@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'stock_scanner_z.py' 
-      - '.github/workflows/stock_scanner_z.yml'
+      - 'stock_scanner_w.py' 
+      - '.github/workflows/stock_scanner_w.yml'
   schedule:
     - cron: '0 10 * * *' 
 
@@ -35,7 +35,7 @@ jobs:
 
       - name: 🚀 运行股票筛选脚本
         run: |
-          python stock_scanner_z.py
+          python stock_scanner_w.py
 
       - name: 💾 自动同步并提交结果
         run: |
