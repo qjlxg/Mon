@@ -1,12 +1,14 @@
 name: Strategy_Confluence
 on:
   push:
+    # 只要以下文件有变动并提交，立即运行工作流
     paths:
       - 'confluence_hunter.py'
       - '.github/workflows/confluence.yml'
+      - 'results/**' # 当任何战法选股结果更新时，也自动触发共振对账
   schedule:
-    - cron: '30 08 * * *' # 北京时间 16:30
-  workflow_dispatch:
+    - cron: '45 08 * * *' # 北京时间 16:45 定时对账
+  workflow_dispatch: # 支持手动点击 Run workflow
 
 permissions:
   contents: write
@@ -17,36 +19,37 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 1 
+          fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - run: pip install pandas
+      - name: Install dependencies
+        run: pip install pandas
 
-      - name: Run Analysis
+      - name: Run Confluence and Backtest
         run: python confluence_hunter.py
 
-      - name: Commit and Push
+      - name: Commit and Push Results
         run: |
           git config --local user.email "bot@github.com"
           git config --local user.name "ConfluenceBot"
           
-          # 1. 先将修改加入暂存区
-          git add results/
+          # 确保目录存在
+          mkdir -p results history
           
-          # 2. 只有在有变动时才继续
+          # 暂存结果和历史数据
+          git add results/ history/
+          
           if [ -n "$(git status --porcelain)" ]; then
-            # 3. 先提交到本地（解决 exit 128 错误的关键）
-            git commit -m "Auto: Confluence Report $(date +'%Y-%m-%d')"
+            # 提交时带上当前时间戳
+            git commit -m "Auto: Report & History Update $(date +'%Y-%m-%d %H:%M')"
             
-            # 4. 提交后再拉取远程变动进行变基
+            # 解决并发冲突的核心逻辑
             git pull --rebase origin main
-            
-            # 5. 最后推送到远程
             git push origin main
           else
-            echo "No changes to report."
+            echo "No changes detected, skipping push."
           fi
