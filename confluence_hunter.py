@@ -25,6 +25,7 @@ OPERATIONS = {
 }
 
 def get_latest_file(folder):
+    """获取文件夹内最新的CSV文件"""
     files = glob.glob(f"{folder}/*.csv")
     return max(files) if files else None
 
@@ -86,26 +87,28 @@ def main():
     # 3. 战果统计 (复盘昨日) & 累计收益计算
     os.makedirs(HISTORY_DIR, exist_ok=True)
     performance_msg = "首次运行或今日无新对账数据。"
-    total_gain = get_latest_total = get_total_gain()
+    total_gain = get_total_gain()
     
     if os.path.exists(HISTORY_FILE):
         hist_df = pd.read_csv(HISTORY_FILE, dtype={'code': str})
-        last_date = hist_df['date'].max()
-        if last_date != today_report['date'].iloc[0]:
-            last_picks = hist_df[hist_df['date'] == last_date].copy()
-            merged = pd.merge(last_picks, today_report[['code', 'price']], on='code', suffixes=('_old', '_now'))
-            if not merged.empty:
-                merged['gain'] = ((merged['price_now'] - merged['price_old']) / merged['price_old'] * 100).round(2)
-                avg_gain = merged['gain'].mean()
-                win_rate = (len(merged[merged['gain'] > 0]) / len(merged)) * 100
-                # 更新累计总收益 (简单累加)
-                total_gain += avg_gain
-                save_total_gain(total_gain)
-                performance_msg = f"昨日精选今日平均涨幅: {avg_gain:.2f}% | 胜率: {win_rate:.1f}%"
+        if not hist_df.empty:
+            last_date = hist_df['date'].max()
+            if last_date != today_report['date'].iloc[0]:
+                last_picks = hist_df[hist_df['date'] == last_date].copy()
+                merged = pd.merge(last_picks, today_report[['code', 'price']], on='code', suffixes=('_old', '_now'))
+                if not merged.empty:
+                    merged['gain'] = ((merged['price_now'] - merged['price_old']) / merged['price_old'] * 100).round(2)
+                    avg_gain = merged['gain'].mean()
+                    win_rate = (len(merged[merged['gain'] > 0]) / len(merged)) * 100
+                    # 更新累计总收益
+                    total_gain += avg_gain
+                    save_total_gain(total_gain)
+                    performance_msg = f"昨日精选今日平均涨幅: {avg_gain:.2f}% | 胜率: {win_rate:.1f}%"
 
     # 4. 更新历史总账 (建立错题集)
     if os.path.exists(HISTORY_FILE):
         full_history = pd.read_csv(HISTORY_FILE, dtype={'code': str})
+        # 避免当天多次运行重复记录
         full_history = full_history[full_history['date'] != today_report['date'].iloc[0]]
         full_history = pd.concat([full_history, today_report], ignore_index=True)
     else:
