@@ -33,7 +33,7 @@ jobs:
         run: |
           pip install akshare pandas pytz numpy
 
-      - name: 🚀 运行股票筛选脚本
+      - name: 🚀 运行脚本
         run: |
           python stock_scanner_go.py
 
