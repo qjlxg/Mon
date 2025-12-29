@@ -1,0 +1,35 @@
+name: Strategy_Confluence
+on:
+  push:
+    paths:
+      - 'confluence_hunter.py'
+      - '.github/workflows/confluence.yml'
+  schedule:
+    - cron: '30 08 * * *' # 北京时间 16:30 (在所有单项脚本之后)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run_confluence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: pip install pandas
+      - name: Run Confluence Analysis
+        run: python confluence_hunter.py
+      - name: Commit and Push
+        run: |
+          git config --local user.email "bot@github.com"
+          git config --local user.name "ConfluenceBot"
+          git add results/
+          if [ -n "$(git status --porcelain)" ]; then
+            git pull --rebase origin main
+            git commit -m "Auto: Confluence Report $(date +'%Y-%m-%d')"
+            git push origin main
+          fi
