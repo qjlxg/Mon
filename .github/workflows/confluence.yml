@@ -1,14 +1,13 @@
 name: Strategy_Confluence
 on:
   push:
-    # 只要以下文件有变动并提交，立即运行工作流
     paths:
       - 'confluence_hunter.py'
       - '.github/workflows/confluence.yml'
-      - 'results/**' # 当任何战法选股结果更新时，也自动触发共振对账
+      - 'results/**'
   schedule:
-    - cron: '45 08 * * *' # 北京时间 16:45 定时对账
-  workflow_dispatch: # 支持手动点击 Run workflow
+    - cron: '45 08 * * *' # 北京时间 16:45
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 1
+          fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -37,19 +36,15 @@ jobs:
           git config --local user.email "bot@github.com"
           git config --local user.name "ConfluenceBot"
           
-          # 确保目录存在
           mkdir -p results history
           
-          # 暂存结果和历史数据
+          # 将结果、历史记录以及收益统计文件全部加入
           git add results/ history/
           
           if [ -n "$(git status --porcelain)" ]; then
-            # 提交时带上当前时间戳
-            git commit -m "Auto: Report & History Update $(date +'%Y-%m-%d %H:%M')"
-            
-            # 解决并发冲突的核心逻辑
+            git commit -m "Auto: Report & Cumulative Gain Update $(date +'%Y-%m-%d %H:%M')"
             git pull --rebase origin main
             git push origin main
           else
-            echo "No changes detected, skipping push."
+            echo "No changes detected."
           fi
