@@ -12,13 +12,17 @@ OUTPUT_BASE = 'results'
 
 def analyze_logic(file_path):
     try:
-        # 1. 加载数据与表头映射
+        # 1. 加载数据
         df = pd.read_csv(file_path)
-        if len(df) < 60: return None
         
+        # 【过滤1：排除次新股】要求上市时间超过180个交易日，确保均线系统稳定
+        if len(df) < 180: return None
+        
+        # 表头映射
         df = df.rename(columns={
             '日期':'date', '股票代码':'code', '开盘':'open', 
-            '收盘':'close', '最高':'high', '最低':'low', '成交量':'volume', '涨跌幅':'pct_chg'
+            '收盘':'close', '最高':'high', '最低':'low', 
+            '成交量':'volume', '涨跌幅':'pct_chg', '换手率':'turnover'
         })
         
         # 格式化代码并过滤板块 (只要沪深A股 60/00)
@@ -27,12 +31,21 @@ def analyze_logic(file_path):
         if not (code.startswith('60') or code.startswith('00')):
             return None
 
-        # 2. 基础过滤：价格 5.0 - 28.0 元
+        # 2. 基础过滤：价格与活跃度
         curr = df.iloc[-1]
-        if not (5.0 <= curr['close'] <= 28.0):
+        
+        # 价格区间：5 - 28元
+        if not (5.0 <= curr['close'] <= 28.0): return None
+        
+        # 【过滤2：强势突破基因】当日涨幅 >= 3.0%
+        cond_strong = curr['pct_chg'] >= 3.0
+        # 【过滤3：换手活跃度】换手率 > 3.0%，排除僵尸股/老庄股
+        cond_active = curr['turnover'] > 3.0
+        
+        if not (cond_strong and cond_active):
             return None
 
-        # 3. 计算技术指标
+        # 3. 技术指标计算
         df['ma5'] = df['close'].rolling(5).mean()
         df['ma10'] = df['close'].rolling(10).mean()
         df['ma20'] = df['close'].rolling(20).mean()
@@ -40,7 +53,7 @@ def analyze_logic(file_path):
         df['vol_ma5'] = df['volume'].rolling(5).mean()
         df['vol_ma60'] = df['volume'].rolling(60).mean()
         
-        # MACD 计算
+        # MACD (12, 26, 9)
         exp1 = df['close'].ewm(span=12, adjust=False).mean()
         exp2 = df['close'].ewm(span=26, adjust=False).mean()
         df['dif'] = exp1 - exp2
@@ -53,7 +66,7 @@ def analyze_logic(file_path):
 
         # --- 分级判定逻辑 ---
         
-        # 【A级：基础强势逻辑】股价在5,10日线上 + 均线向上 + (放量或回踩MA10)
+        # 【A级：基础强势】均线多头 + 趋势向上 + (放量或回踩)
         cond_basic_trend = curr['close'] > curr['ma5'] > curr['ma10']
         cond_basic_slope = curr['ma5'] > prev['ma5']
         cond_basic_vol = (curr['volume'] > curr['vol_ma5'] * 1.2) or (curr['close'] >= curr['ma10'] and curr['volume'] <= curr['vol_ma5'])
@@ -63,7 +76,7 @@ def analyze_logic(file_path):
         
         level = "A"
 
-        # 【AA级：标准形态】MA60向上 + MACD动量改善
+        # 【AA级：标准形态】MA60趋势向上 + MACD红柱增长
         cond_aa_trend = curr['ma60'] > df.iloc[-5]['ma60']
         cond_aa_macd = curr['macd'] > prev['macd']
         
@@ -71,35 +84,33 @@ def analyze_logic(file_path):
             level = "AA"
 
             # 【AAA级：极品老鸭头】
-            # 1. 放宽鸭头高度：从 1.12 降至 1.08 (前期最高比当前MA60高8%)
+            # 1. 鸭头顶高度放宽：前期最高 > MA60 * 1.08
             cond_aaa_head = recent_20['high'].max() > curr['ma60'] * 1.08
-            # 2. 鸭鼻孔地量：近期出现过缩量洗盘
+            # 2. 鸭鼻孔地量：近期出现过缩量洗盘 (< 60日均量的0.8倍)
             cond_aaa_nostril = recent_10['volume'].min() < curr['vol_ma60'] * 0.8
-            # 3. MACD水上：多头强势区
+            # 3. MACD水上：DIF在零轴上方
             cond_aaa_water = curr['dif'] > 0
             
             if cond_aaa_head and cond_aaa_nostril and cond_aaa_water:
                 level = "AAA"
 
-        # 准备输出字段
         return {
+            'filter_date': curr['date'],
             'code': code, 
             'name': None, 
-            'price': round(curr['close'], 2), 
             'level': level,
-            'pct_chg': f"{curr['pct_chg']}%",  # 当日涨幅
-            'volume_ratio': round(curr['volume'] / curr['vol_ma5'], 2), # 量比
-            'filter_date': curr['date'] # 当前数据日期
+            'price': round(curr['close'], 2), 
+            'pct_chg': f"{curr['pct_chg']}%",
+            'turnover': f"{curr['turnover']}%",
+            'vol_ratio': round(curr['volume'] / curr['vol_ma5'], 2)
         }
             
     except Exception:
         return None
 
 def main():
-    if not os.path.exists(NAMES_FILE):
-        return
+    if not os.path.exists(NAMES_FILE): return
     
-    # 加载名称并排除ST
     names_df = pd.read_csv(NAMES_FILE, dtype={'code': str})
     names_df = names_df[~names_df['name'].str.contains(r'ST|退|\*ST', na=False)]
     valid_codes = set(names_df['code'].apply(lambda x: x.zfill(6)).tolist())
@@ -107,10 +118,9 @@ def main():
     files = [f for f in glob.glob(f'{DATA_DIR}/*.csv') if os.path.basename(f).split('.')[0].zfill(6) in valid_codes]
     
     if not files:
-        print("No stock data found in directory.")
+        print("Stock data directory is empty.")
         return
 
-    # 并行处理
     with Pool(cpu_count()) as p:
         results = p.map(analyze_logic, files)
     
@@ -121,32 +131,29 @@ def main():
         name_dict = names_df.set_index(names_df['code'].apply(lambda x: x.zfill(6)))['name'].to_dict()
         res_df['name'] = res_df['code'].map(name_dict)
         
-        # 排序：等级优先，涨幅次之
+        # 排序逻辑：等级 > 涨幅
         res_df = res_df.sort_values(by=['level', 'pct_chg'], ascending=[False, False])
         
-        # 保存结果
         now = datetime.now()
         dir_path = os.path.join(OUTPUT_BASE, now.strftime('%Y%m'))
         os.makedirs(dir_path, exist_ok=True)
-        
         save_path = os.path.join(dir_path, f"duck_hunter_{now.strftime('%Y%m%d_%H%M%S')}.csv")
         
-        # 整理输出列顺序
-        final_cols = ['filter_date', 'code', 'name', 'level', 'price', 'pct_chg', 'volume_ratio']
+        final_cols = ['filter_date', 'code', 'name', 'level', 'price', 'pct_chg', 'turnover', 'vol_ratio']
         res_df[final_cols].to_csv(save_path, index=False)
         
-        # 终端统计输出
         counts = res_df['level'].value_counts()
-        print("-" * 30)
+        print("-" * 50)
         print(f"筛选日期: {res_df['filter_date'].iloc[0]}")
-        print(f"总入选数: {len(res_df)} 只")
-        print(f"AAA级(极品): {counts.get('AAA', 0)} 只")
-        print(f"AA 级(标准): {counts.get('AA', 0)} 只")
-        print(f"A  级(基础): {counts.get('A', 0)} 只")
-        print(f"结果已存入: {save_path}")
-        print("-" * 30)
+        print(f"满足条件: 涨幅≥3%, 换手>3%, 上市>180天")
+        print(f"总计入选: {len(res_df)} 只")
+        print(f"AAA 级 (极品老鸭): {counts.get('AAA', 0)} 只")
+        print(f"AA  级 (标准形态): {counts.get('AA', 0)} 只")
+        print(f"A   级 (基础强势): {counts.get('A', 0)} 只")
+        print(f"保存路径: {save_path}")
+        print("-" * 50)
     else:
-        print(f"今日 ({datetime.now().strftime('%Y-%m-%d')}) 无匹配股票。")
+        print(f"今日 ({datetime.now().strftime('%Y-%m-%d')}) 无符合强势老鸭头形态的股票。")
 
 if __name__ == "__main__":
     main()
