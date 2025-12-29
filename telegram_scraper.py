@@ -73,7 +73,7 @@ def main():
     now = datetime.datetime.now(sh_tz)
     sh_time = now.strftime('%Y-%m-%d %H:%M:%S')
     
-    final_output = f"# Telegram 频道汇总\n\n**最后更新: {sh_time}**\n\n"
+    final_output = f"# 汇总\n\n**最后更新: {sh_time}**\n\n"
     for c in channels:
         final_output += get_channel_content(c)
         time.sleep(1.5) # 稍微延迟防屏蔽
