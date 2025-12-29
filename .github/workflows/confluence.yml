@@ -1,4 +1,5 @@
 name: Strategy_Confluence
+
 on:
   push:
     paths:
@@ -6,7 +7,8 @@ on:
       - '.github/workflows/confluence.yml'
       - 'results/**'
   schedule:
-    - cron: '45 08 * * *'
+    # 设定在北京时间 17:00 运行（确保 16 战法脚本已在 16:00 跑完并产出结果）
+    - cron: '00 09 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 1 # 修改为 1 提高效率
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -29,6 +31,7 @@ jobs:
         run: pip install pandas tabulate
 
       - name: Run Analysis
+        # 运行刚才为你写好的共振汇总脚本
         run: python confluence_hunter.py
 
       - name: Commit and Push All Changes
@@ -36,18 +39,20 @@ jobs:
           git config --local user.email "bot@github.com"
           git config --local user.name "ConfluenceBot"
           
-          # 确保目录存在
-          mkdir -p results history
+          # 确保所有相关输出目录都被 Git 识别
+          mkdir -p results reports
           
-          # 关键：使用路径添加，而不是通配符扩展，防止 pathspec 报错
+          # 添加战法结果目录和共振报告目录
           git add results/
-          git add history/
-          git add 显示方式.md
+          git add reports/
+          
+          # 如果你有其他自定义的 md 文件也可以单独 add
+          # git add 显示方式.md
           
           if [ -n "$(git status --porcelain)" ]; then
-            git commit -m "Auto: Daily Report & History Backup $(date +'%Y-%m-%d')"
+            git commit -m "Auto: 16战法共振分析报告 $(date +'%Y-%m-%d')"
             git pull --rebase origin main
             git push origin main
           else
-            echo "No changes found, skipping commit."
+            echo "没有发现报告更新，跳过提交。"
           fi
