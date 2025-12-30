@@ -15,49 +15,51 @@ def get_indicators(df):
     for m in [5, 10, 20, 60]:
         df[f'ma{m}'] = df['收盘'].rolling(m).mean()
     
+    # 趋势指标
     df['ma10_up'] = df['ma10'] > df['ma10'].shift(1)
-    df['ma60_up'] = df['ma60'] > df['ma60'].shift(1)
     df['v_ma5'] = df['成交量'].rolling(5).mean()
     df['change'] = df['收盘'].pct_change() * 100
     return df
 
 def check_logic(df):
-    if len(df) < 60: return None
+    if len(df) < 60: return None, None
     curr = df.iloc[-1]
     
-    # 1. 价格限制 (5-20元)
-    if not (5.0 <= curr['收盘'] <= 20.0):
-        return None
+    # 1. 价格过滤 (5-20元) 与 成交额过滤 ( > 3亿)
+    if not (5.0 <= curr['收盘'] <= 20.0) or curr['成交额'] < 300000000:
+        return None, None
 
-    # 2. 成交额限制 ( > 3亿)
-    if curr['成交额'] < 300000000:
-        return None
-
-    # 3. 强势基因 (15天内有过涨停或9.5%以上大阳)
+    # 2. 强势基因判定 (15天内有过涨停或9.5%以上大阳)
     recent_15 = df.tail(15)
     if not (recent_15['change'] > 9.5).any():
-        return None
+        return None, None
 
-    # 4. 线上形态判断
+    # 3. 线上形态判断 (阴线 或 微跌收盘)
     is_yin = curr['收盘'] < curr['开盘'] or curr['change'] <= 0
     
-    # 判定支撑位：优先看MA10，其次MA5
-    support_ma = None
-    if curr['最低'] <= curr['ma10'] * 1.01 and curr['收盘'] >= curr['ma10'] * 0.98:
-        support_ma = 'ma10'
-    elif curr['最低'] <= curr['ma5'] * 1.01 and curr['收盘'] >= curr['ma5'] * 0.98:
-        support_ma = 'ma5'
-
-    is_shrink = curr['成交量'] < df['v_ma5'].iloc[-1]
+    # 4. 寻找支撑位与偏离度计算
+    # 核心原则：阴线位置越靠近均线越好。逻辑：先看MA10，再看MA5
+    support_ma_key = None
+    if curr['最低'] <= curr['ma10'] * 1.01 and curr['收盘'] >= curr['ma10'] * 0.985:
+        support_ma_key = 'ma10'
+    elif curr['最低'] <= curr['ma5'] * 1.01 and curr['收盘'] >= curr['ma5'] * 0.985:
+        support_ma_key = 'ma5'
     
-    if is_yin and support_ma and is_shrink and curr['收盘'] > curr['ma60']:
-        return f"回踩{support_ma.upper()}阴线", support_ma
+    if not support_ma_key: return None, None
+
+    # 5. 腾空动力判定：近期必须有过远离5日线 > 7% 的爆发阶段
+    has_jumped = (df['最高'].tail(10) > df['ma5'].tail(10) * 1.07).any()
+    
+    # 6. 精准缩量判断 (成交量 < 5日均量的80%，体现洗盘)
+    is_shrink = curr['成交量'] < (df['v_ma5'].iloc[-1] * 0.8)
+
+    if is_yin and has_jumped and is_shrink and curr['ma10_up']:
+        return f"回踩{support_ma_key.upper()}阴线", support_ma_key
     
     return None, None
 
 def main():
-    if not os.path.exists(OUTPUT_DIR): 
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+    if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     name_map = {}
     if os.path.exists(NAMES_FILE):
@@ -81,7 +83,7 @@ def main():
                 code = os.path.basename(f).replace('.csv', '')
                 curr_p = df['收盘'].iloc[-1]
                 ma_val = df[ma_key].iloc[-1]
-                # 计算偏离度
+                # 计算并四舍五入偏离度
                 bias = round((curr_p - ma_val) / ma_val * 100, 2)
                 
                 results.append({
@@ -97,16 +99,18 @@ def main():
 
     if results:
         res_df = pd.DataFrame(results)
-        # --- 核心改进：按偏离度绝对值升序排列 ---
-        # 绝对值越小，说明离均线越近，放在报告最前面
+        # 核心逻辑：按偏离度的绝对值升序排。离均线0%最近的排在最前面
         res_df['abs_bias'] = res_df['偏离度%'].abs()
         res_df = res_df.sort_values(by='abs_bias').drop(columns=['abs_bias'])
         
+        # 仅保留偏离度在 [-1.5%, 1.5%] 之间的个股，进一步精减结果
+        res_df = res_df[res_df['偏离度%'].between(-1.5, 1.5)]
+        
         save_path = f"{OUTPUT_DIR}/yin_signals_{date_str}.csv"
         res_df.to_csv(save_path, index=False, encoding='utf-8-sig')
-        print(f"🎯 扫描完成：精选出 {len(results)} 个目标，已按偏离度排序。")
+        print(f"🎯 扫描完成：精选出 {len(res_df)} 个“贴线”目标。")
     else:
-        print("今日未发现符合严苛条件的信号")
+        print("今日未发现符合严苛条件的“贴线”信号。")
 
 if __name__ == "__main__":
     main()
