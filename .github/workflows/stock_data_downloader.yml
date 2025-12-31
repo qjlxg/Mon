@@ -19,8 +19,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          # 关键点 1: 取消默认的浅克隆，获取完整历史以解决 Diverged 问题
-          fetch-depth: 0 
+          fetch-depth: 1  # 关键：浅克隆，极大降低失败概率
+          persist-credentials: true
+
+      - name: Configure Git for stability
+        run: |
+          git config --global http.postBuffer 524288000
+          git config --global core.compression 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -32,15 +37,13 @@ jobs:
 
       - name: Run Downloader with Auto-Retry
         run: |
-          # 创建目录确保路径存在
           mkdir -p stock_data
           ATTEMPTS=0
-          MAX_ATTEMPTS=20 
-          until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]
-          do
+          MAX_ATTEMPTS=20
+          until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
             python stock_data_downloader.py && break
             ATTEMPTS=$((ATTEMPTS+1))
-            echo "发生错误，10秒后重试第 $ATTEMPTS 次..."
+            echo "下载失败，重试第 $ATTEMPTS 次（10秒后）..."
             sleep 10
           done
 
@@ -48,10 +51,6 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "feat(stock): daily update [skip ci]"
-          # 关键点 2: 修正 file_pattern。如果 checkpoint.txt 可能不存在，
-          # 我们先用 git add 确保它被追踪，或者在 pattern 中更宽泛一些。
           file_pattern: 'stock_data/*.csv stock_data/*.txt'
-          # 关键点 3: 强制拉取远程最新代码，防止 Diverged 错误
-          push_options: '--force' 
-          # 关键点 4: 自动合并远程更改
-          repository: .
+          # 移除 --force，除非必须强制覆盖
+          # push_options: '--force'
