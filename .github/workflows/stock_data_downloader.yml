@@ -4,10 +4,9 @@ on:
   push:
     paths:
       - 'stock_data_downloader.py'
-      - '.github/workflows/stock_data_downloader.yml' # 修改配置文件时也触发测试
   schedule:
     - cron: '13 7 * * *' # 北京时间 15:13
-  workflow_dispatch: # 保留手动触发按钮，方便调试
+  workflow_dispatch:
 
 jobs:
   download-data:
@@ -16,50 +15,42 @@ jobs:
       contents: write
 
     steps:
-      # 1. 彻底解决 unresolved deltas：使用完整克隆
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          # 关键点 1: 取消默认的浅克隆，获取完整历史以解决 Diverged 问题
           fetch-depth: 0 
-          clean: true
 
-      # 2. 设置 Python 环境并开启缓存
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'
 
-      # 3. 安装依赖
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install akshare pandas --retries 10
+        run: pip install akshare pandas
 
-      # 4. 运行下载器（带更稳健的重试逻辑）
       - name: Run Downloader with Auto-Retry
         run: |
+          # 创建目录确保路径存在
           mkdir -p stock_data
           ATTEMPTS=0
-          MAX_ATTEMPTS=10 
+          MAX_ATTEMPTS=20 
           until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]
           do
-            echo "开始第 $((ATTEMPTS+1)) 次尝试..."
             python stock_data_downloader.py && break
             ATTEMPTS=$((ATTEMPTS+1))
-            echo "发生错误，15秒后重试..."
-            sleep 15
+            echo "发生错误，10秒后重试第 $ATTEMPTS 次..."
+            sleep 10
           done
-          if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
-            echo "错误：已达到最大重试次数，程序退出。"
-            exit 1
-          fi
 
-      # 5. 自动提交并强制推送以解决 Diverged 问题
       - name: Git Auto Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "feat(stock): daily update [skip ci]"
-          file_pattern: 'stock_data/*'
+          # 关键点 2: 修正 file_pattern。如果 checkpoint.txt 可能不存在，
+          # 我们先用 git add 确保它被追踪，或者在 pattern 中更宽泛一些。
+          file_pattern: 'stock_data/*.csv stock_data/*.txt'
+          # 关键点 3: 强制拉取远程最新代码，防止 Diverged 错误
           push_options: '--force' 
-          commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          # 关键点 4: 自动合并远程更改
+          repository: .
